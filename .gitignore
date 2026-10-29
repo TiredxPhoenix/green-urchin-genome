@@ -1,0 +1,78 @@
+# ==========================================
+# GENOMIC DATA & ASSEMBLIES (FASTA/FASTQ)
+# ==========================================
+*.fna
+*.fa
+*.fasta
+*.fna.fai
+*.fa.fai
+*.fastq
+*.fq
+*.fastq.gz
+*.fq.gz
+*.gfa
+
+# ==========================================
+# ALIGNMENTS, INDEXES & BINARY FORMATS
+# ==========================================
+*.bam
+*.sam
+*.bai
+*.mmi
+*.ht2
+*.paf
+*.paf.gz
+*.wig
+*.cov
+*.bed
+*.gff_db
+
+# ==========================================
+# PIPELINE OUTPUTS & DIRECTORIES
+# ==========================================
+braker/
+busco_output_final/
+busco_protein_results/
+busco_downloads/
+quast_comparison_out/
+quast_purged_out/
+ragtag_output/
+greenUrchinCleaned/
+intermediate_files/
+todelete/
+eggnog_db/
+purpleUrchinRef/
+gmes_linux_64_4/
+*.zip
+
+# ==========================================
+# LOGS, TEMPS & SYSTEM ARTIFACTS
+# ==========================================
+*.log
+errors/
+tmp/
+*.stdout
+*.stderr
+*Zone.Identifier
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# KEEP QUARTO & CODE ARTIFACTS TRACKED
+# ==========================================
+_site/
+.quarto/
+
+# GeneMark License Keys
+gm_key
+.gm_key
+
+# Large Annotation Files
+*.gff
+*.gff3
+*.faa
+
+# Large Annotation Files
+*.gff
+*.gff3
+*.faa
