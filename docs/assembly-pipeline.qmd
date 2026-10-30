@@ -1,0 +1,231 @@
+---
+title: "1. Assembly, Purging & Scaffolding"
+format:
+  html:
+    toc: true
+---
+
+## Overview
+This section documents the preprocessing, haplotig purging, and chromosome-level scaffolding of the *Strongylocentrotus droebachiensis* genome assembly.
+
+## Rationale
+* **Size Discrepancy:** The original assembly is a whopping 2.23GB, much larger than the expected genome size of 800Mb±100 for a similar urchin.
+
+* **High Polymorphism & Heterozygosity:** This genome is derived from the whole organism (therefore diploid) and so would contain both maternal and paternal copies of genes.
+
+* **Whole-Organism Contamination:** By extracting from a whole organism there is likely to be some contamination from whatever flora lived on or within the urchin. Additionally, sea urchins are known to be polymorphic, with great variation of the same gene seen in different alleles. This variability can cause assemblers to keep redundant copies of the same loci, as the different alleles are unique enough to appear as different genes.
+
+## 1. Raw Assembly & Assessment
+* **Starting Assembly:** `GCA_035222895.1_eeStrDroe1_p1.0_genomic.fna`
+* **Goal:** Assess initial continuity and identify redundant haplotigs or high levels of heterozygosity that could disrupt downstream gene annotation.
+
+
+
+## 2. Assembly Purging & Cleaning
+I utilized custom scripts to purge duplicate contigs and clean up 
+the assembly:
+* **Scripts Used:** `run_purge.py`, `purge_assembly.py`
+* **Key Cutoffs:** Documented in the local `cutoffs` file.
+* **Final Clean Output:** `GCA_035222895.1_eeStrDroe1_p1.0_genomic.purged_clean.fna`
+
+```bash
+# STEPS FOLLOWED (minus usual fiddling with settings, dependencies, 
+# etc.)
+
+# first thing was to change wsl settings to allow enough memory use.
+# this is in powershell
+notepad $env:USERPROFILE\.wslconfig
+
+# add the following lines to the wslconfig file:
+[wsl2]
+memory=28GB
+processors=20
+swap=8G
+
+# in powershell restart wsl to apply change
+wsl --shutdown
+
+# create conda environment, purgedups, with dependencies
+conda create -n purgedups -c bioconda conda-forge purge_dups 
+minimap2
+
+# turn it on; the prompt will change to say (purgedups)
+conda activate purgedups
+
+# self-alignment using minimap2 (compare raw genome file with itself 
+# . When minimap2 finds two copies of a gene that are almost 
+# identical it writes down the match coordinates. Outputs a 27gb 
+# .paf file called self.paf - this took 14.5 min on my machine)
+minimap2 -x asm10 -DP -t 12 
+GCA_035222895.1_eeStrDroe1_p1.0_genomic.fna 
+GCA_035222895.1_eeStrDroe1_p1.0_genomic.fna > self.paf
+
+# now we have self.paf! next is pbcstat (pair-based coverage 
+# statistics), to analyze the read-depth distribution from the 
+# alignment file and produce clear statistical threshold
+pbcstat self.paf
+# generates files: PB.base.cov (base-level coverage data),
+#                  PB.stat (read-depth stats & histogram data),
+#                  PB.cov.wig (maps coverage for use in genome 
+#                  viewer).
+
+# would have used these for calcuts but calcuts did not work! 
+# instead, made custom empirical cutoffs file to feed purge_dups...
+echo "5 10 15 50 150 250" > cutoffs
+
+# to parse self.paf I used a script:
+
+python3 -c '
+  # open the self-alignment paf file for reading, 
+  # initialize 
+  # a new bed file for outputting duplication intervals
+  for line in f:
+    parts = line.strip().split("\t")
+ 
+  # skip lines that are too short to contain required 
+  # coordinate and match fields
+    if len(parts) < 11:
+      continue
+
+  # extract query (q) and target (t) sequence names, 
+  # lengths, coordinate spans from paf columns
+    qname, qlen, qstart, qend = parts[0], int(parts[1]), 
+int(parts[2]), int(parts[3])
+    tname, tlen, tstart, tend = parts[5], int(parts[6]), 
+int(parts[7]), int(parts[8])
+
+  # extract match metrics: nmatch (matching bases) and alen 
+  # (total alignment block length)
+    nmatch, alen = int(parts[9]), int(parts[10])
+
+  # filter out trivial self-hits: skip if a contig aligns 
+  # to itself at nearly identical coordinates
+    if qname == tname and abs(qstart - tstart) < 10 and 
+abs(qend - tend) < 10:
+      continue
+
+#  apply confidence filters: only keep substantial 
+#  alignments (>1kb lengths and >80% sequence identity)
+    if alen > 1000 and  (nmatch / alen) > 0.8:
+      # write out validated duplication interval in 
+      # standard 4-column bed format
+      out.write(f"{qname}\t{qstart}\t{qend}\t{tname}\n")
+
+'
+
+# now to purge the original assembly of redundant 
+# haplotigs! overlap_fraction value was decided upon 
+# empirically...
+```
+
+Here is purge_assembly.py, which intakes the original 
+genome assembly file and the self.paf file, and outputs a 
+.purged.fna file.
+
+
+```python
+
+import sys
+
+def purge_by_self_alignment(fasta_in, paf_in, fasta_out, overlap_fraction=0.92):
+    print("Step 1: Reading contig lengths from FASTA...")
+    contig_lens = {}
+    current_chrom = None
+    current_seq_len = 0
+    
+    with open(fasta_in) as f:
+        for line in f:
+            if line.startswith(">"):
+                if current_chrom:
+                    contig_lens[current_chrom] = current_seq_len
+                current_chrom = line.strip().split()[0][1:]
+                current_seq_len = 0
+            else:
+                current_seq_len += len(line.strip())
+        if current_chrom:
+            contig_lens[current_chrom] = current_seq_len
+
+    print(f"Loaded {len(contig_lens)} contigs.")
+
+    print("Step 2: Analyzing self-alignments in PAF to find redundant contigs...")
+    q_intervals = {chrom: [] for chrom in contig_lens}
+    
+    with open(paf_in) as f:
+        for line in f:
+            parts = line.strip().split("\t")
+            if len(parts) < 11: continue
+            qname, qlen, qstart, qend = parts[0], int(parts[1]), int(parts[2]), int(parts[3])
+            tname, tlen, tstart, tend = parts[5], int(parts[6]), int(parts[7]), int(parts[8])
+            
+            # CRITICAL FIX: Skip self-hits entirely. We only want cross-contig redundancies.
+            if qname == tname:
+                continue
+                
+            # If query is shorter than or equal to target, consider query as the potential haplotig
+            if qname in contig_lens and tname in contig_lens:
+                if contig_lens[qname] <= contig_lens[tname]:
+                    q_intervals[qname].append((qstart, qend))
+
+    # Merge overlapping alignment intervals per query contig to calculate true coverage fraction
+    dropped_contigs = set()
+    for chrom, intervals in q_intervals.items():
+        if not intervals:
+            continue
+        intervals.sort()
+        merged = []
+        for start, end in intervals:
+            if not merged or merged[-1][1] < start:
+                merged.append([start, end])
+            else:
+                merged[-1][1] = max(merged[-1][1], end)
+        
+        total_covered = sum(end - start for start, end in merged)
+        length = contig_lens.get(chrom, 0)
+        if length > 0 and (total_covered / length) >= overlap_fraction:
+            dropped_contigs.add(chrom)
+
+    print(f"Identified {len(dropped_contigs)} redundant haplotig contigs to drop.")
+
+    print("Step 3: Writing clean purged FASTA...")
+    kept_count = 0
+    kept_len = 0
+    
+    with open(fasta_in) as fin, open(fasta_out, "w") as fout:
+        write_flag = False
+        for line in fin:
+            if line.startswith(">"):
+                chrom = line.strip().split()[0][1:]
+                if chrom not in dropped_contigs:
+                    write_flag = True
+                    kept_count += 1
+                    fout.write(line)
+                else:
+                    write_flag = False
+            else:
+                if write_flag:
+                    fout.write(line)
+                    kept_len += len(line.strip())
+
+    print(f"Done! Kept {kept_count} contigs. New assembly size: {kept_len / 1e6:.2f} Mb")
+
+if __name__ == "__main__":
+    purge_by_self_alignment(
+        "GCA_035222895.1_eeStrDroe1_p1.0_genomic.fna", 
+        "self.paf", 
+        "GCA_035222895.1_eeStrDroe1_p1.0_genomic.purged.fna",
+        overlap_fraction=0.92
+    )
+
+```
+
+Finally, a step to sanitize and tidy the formatting of .purged.fna so it plays 
+nice
+
+
+## 3. Validation of the purged .fna with BUSCO and QUAST
+
+
+## 4. Scaffolding & Chromosome Assignment
+Following purging, the clean assembly was aligned and ordered into pseudomolecules:
+* **Reference Resource:** Purple urchin reference (`GCF_000002235.5_Spur_5.0_genomic.fna`)
+* **Outputs:** `eeStrDroe_chromosomes.fna` along with corresponding index structures (`.mmi`, `.ht2`) for downstream RNA-seq alignment with HISAT2.

@@ -1,0 +1,20 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: "S. droebachiensis Genome Annotation"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+      - href: assembly-pipeline.qmd
+        text: 1. Assembling & Purging
+      - href: about.qmd
+        text: About / Overview
+
+format:
+  html:
+    theme: solar
+    css: styles.css
+    toc: true
